@@ -10,8 +10,8 @@ final class GameModel: ObservableObject {
 
     // MARK: - 可调参数（手感都在这调）
     let raceDistance: Double = 1000.0      // 赛道长度（游戏米）
-    let cadenceToSpeed: Double = 0.09       // 踏频(RPM) → 游戏速度(m/s)：60RPM≈5.4m/s，可赢 AI
-    let aiSpeed: Double = 4.0              // AI 匀速(m/s)，约 250s 跑完
+    let cadenceToSpeed: Double = 0.045      // 踏频(RPM) → 游戏速度(m/s)：136RPM≈6.1m/s 可甩开 AI；偷懒则 AI 反超
+    let aiSpeed: Double = 4.5              // AI 匀速(m/s)，约 222s 跑完；正常蹬(~100RPM≈4.5)与之并驾
     let boostMultiplier: Double = 1.8       // 冲刺速度倍率
     let boostDuration: Double = 2.2         // 冲刺持续(s)
     let boostCooldown: Double = 4.0         // 冲刺冷却(s)
