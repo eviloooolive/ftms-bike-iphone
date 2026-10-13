@@ -29,6 +29,10 @@ final class BluetoothManager: NSObject, ObservableObject {
     /// 当前阻力档位（程序本地记录，因为 MRK 不回传阻力值）。
     @Published var resistanceLevel: Int = 0
 
+    // 调试用：暴露原始累计值与每秒增量，便于确认字段单位（转数/米）。
+    @Published var lastCumRevsValue: UInt16 = 0
+    @Published var lastCadenceRate: Double = 0
+
     // MARK: - 私有
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -37,6 +41,13 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var controlChar: CBCharacteristic?
     private var devices: [UUID: CBPeripheral] = [:]
     private let maxPoints = 120
+
+    // 踏频/距离换算状态：MRK 的“踏频”位发的是累计计数值，需做差分得到瞬时踏频。
+    private var lastCumRevs: UInt16?
+    private var lastCumTime: Date?
+    private var smoothedCadence: Double = 0
+    private let metersPerRev: Double = 2.0   // 每转等效里程（米），用于把累计转数换算成距离
+    private var syncTimer: Timer?
 
     private let timeFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
@@ -80,6 +91,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        stopResistanceSync()
         if let p = peripheral { central.cancelPeripheralConnection(p) }
         appendLog("主动断开")
     }
@@ -88,7 +100,12 @@ final class BluetoothManager: NSObject, ObservableObject {
     func requestControl() { sendControl(.requestControl) }
     func start() { sendControl(.startResume) }
     func stop() { sendControl(.stopPause, params: Data([0x01])) }
-    func reset() { sendControl(.reset) }
+    /// 重置：下发设备 reset 指令，并清空 App 本地骑行数据（device 不支持时本地也能归零）。
+    func reset() {
+        sendControl(.reset)
+        resetLocalState()
+        appendLog("已重置本地骑行数据（设备重置指令已下发）")
+    }
 
     func setResistance(_ level: Int) {
         let clamped = min(max(level, 0), 100)
@@ -107,6 +124,39 @@ final class BluetoothManager: NSObject, ObservableObject {
         var payload = Data([op.rawValue])
         if let params = params { payload.append(params) }
         p.writeValue(payload, for: char, type: .withResponse)
+    }
+
+    // MARK: - 阻力实时同步
+    /// 启动定时器：每 2.5s 把 App 当前的阻力档位重新写回单车，
+    /// 保证车与 App 阻力始终一致（MRK 不回传阻力，因此 App 作为唯一控制源强制同步）。
+    private func startResistanceSync() {
+        stopResistanceSync()
+        syncTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+            self?.reassertResistance()
+        }
+    }
+
+    private func stopResistanceSync() {
+        syncTimer?.invalidate()
+        syncTimer = nil
+    }
+
+    private func reassertResistance() {
+        guard let char = controlChar, let p = peripheral, connectionState == .connected else { return }
+        var v = Int16(resistanceLevel * 10).littleEndian
+        let params = Data(bytes: &v, count: 2)
+        var payload = Data([ControlOp.setResistance.rawValue])
+        payload.append(params)
+        p.writeValue(payload, for: char, type: .withResponse)
+    }
+
+    // MARK: - 本地状态清空（断线 / 重置时调用）
+    private func resetLocalState() {
+        latest = IndoorBikeSample()
+        speedSeries.removeAll(); cadenceSeries.removeAll(); powerSeries.removeAll()
+        heartRateSeries.removeAll(); distanceSeries.removeAll(); energySeries.removeAll()
+        lastCumRevs = nil; lastCumTime = nil; smoothedCadence = 0
+        lastCumRevsValue = 0; lastCadenceRate = 0
     }
 
     // MARK: - 日志 / 工具
@@ -130,7 +180,8 @@ final class BluetoothManager: NSObject, ObservableObject {
     // MARK: - 解析：Indoor Bike Data (2AD2)
     /// 兼容 MRK-S10M-96ED 的非标准帧：
     /// - 0x0075 帧把 bit5(阻力) 错误置位，但距离后只剩 1 字节是 uint8 功率；
-    /// - 0x0B00 帧不含速度(bit0)，避免把能量误读成速度。
+    /// - 0x0B00 帧不含速度(bit0)，避免把能量误读成速度；
+    /// - “踏频”位(bit2)上发的是**累计计数值**（非瞬时踏频），单独存到 cumRevsRaw 供后续差分。
     static func parseIndoorBikeData(_ data: Data) -> IndoorBikeSample {
         var s = IndoorBikeSample()
         guard data.count >= 4 else { return s }
@@ -141,9 +192,9 @@ final class BluetoothManager: NSObject, ObservableObject {
         // 每个字段读取前都做边界检查，避免真机收到截断帧时越界崩溃。
         if flags & 0x0001 != 0, off + 2 <= count { s.speedKmph = Double(u16(data, off)) / 100.0; off += 2 }
         if flags & 0x0002 != 0, off + 2 <= count { off += 2 }                              // 平均速度
-        if flags & 0x0004 != 0, off + 2 <= count { s.cadenceRpm = Double(u16(data, off)) / 2.0; off += 2 }
+        if flags & 0x0004 != 0, off + 2 <= count { s.cumRevsRaw = u16(data, off); off += 2 } // 累计计数（非瞬时踏频）
         if flags & 0x0008 != 0, off + 2 <= count { off += 2 }                              // 平均踏频
-        if flags & 0x0010 != 0, off + 3 <= count { s.distanceM = Double(u24(data, off)); off += 3 }
+        if flags & 0x0010 != 0, off + 3 <= count { s.distanceM = Double(u24(data, off)); off += 3 } // 仅作参考，主显示由 cumRevsRaw 换算
 
         let hasRes = (flags & 0x0020) != 0
         let hasPow = (flags & 0x0040) != 0
@@ -270,6 +321,8 @@ extension BluetoothManager: CBCentralManagerDelegate {
                         error: Error?) {
         connectionState = .disconnected
         indoorBikeChar = nil; statusChar = nil; controlChar = nil
+        stopResistanceSync()
+        resetLocalState()
         appendLog("已断开：\(error?.localizedDescription ?? "正常")")
     }
 }
@@ -310,6 +363,8 @@ extension BluetoothManager: CBPeripheralDelegate {
         connectionState = .connected
         appendLog("特征订阅完成，开始接收数据")
         requestControl()
+        reassertResistance()      // 连上即把 App 阻力档位同步到车
+        startResistanceSync()     // 之后每 2.5s 保持同步
     }
 
     func peripheral(_ peripheral: CBPeripheral,
@@ -319,13 +374,38 @@ extension BluetoothManager: CBPeripheralDelegate {
         if characteristic.uuid == FTMS.indoorBikeData {
             let s = BluetoothManager.parseIndoorBikeData(value)
             DispatchQueue.main.async {
-                self.latest = s
-                self.speedSeries     = self.append(self.speedSeries, s.speedKmph)
-                self.cadenceSeries   = self.append(self.cadenceSeries, s.cadenceRpm)
-                self.powerSeries     = self.append(self.powerSeries, s.powerW.map(Double.init))
-                self.heartRateSeries = self.append(self.heartRateSeries, s.heartRate.map(Double.init))
-                self.distanceSeries  = self.append(self.distanceSeries, s.distanceM)
-                self.energySeries    = self.append(self.energySeries, s.energyKcal)
+                // 从上一帧继承踏频/距离，避免 0x0B00 能量帧到来时把它们清零。
+                var updated = self.latest
+                updated.speedKmph = s.speedKmph
+                updated.powerW = s.powerW
+                updated.energyKcal = s.energyKcal
+                if let raw = s.cumRevsRaw {
+                    let now = Date()
+                    if let last = self.lastCumRevs, let lastT = self.lastCumTime {
+                        let dt = now.timeIntervalSince(lastT)
+                        if dt > 0 {
+                            var delta = Int(raw) - Int(last)
+                            if delta < -32768 { delta += 65536 }      // 16 位回绕
+                            else if delta > 32768 { delta -= 65536 }
+                            let rate = Double(delta) / dt             // 每秒增量（转/秒）
+                            self.lastCadenceRate = rate
+                            let instCad = rate * 60.0                 // 瞬时踏频 RPM
+                            self.smoothedCadence = self.smoothedCadence * 0.6 + max(0, instCad) * 0.4
+                        }
+                    }
+                    self.lastCumRevs = raw
+                    self.lastCumTime = now
+                    self.lastCumRevsValue = raw
+                    updated.cadenceRpm = max(0, self.smoothedCadence)
+                    updated.distanceM = Double(raw) * self.metersPerRev
+                }
+                self.latest = updated
+                self.speedSeries     = self.append(self.speedSeries, updated.speedKmph)
+                self.cadenceSeries   = self.append(self.cadenceSeries, updated.cadenceRpm)
+                self.powerSeries     = self.append(self.powerSeries, updated.powerW.map(Double.init))
+                self.heartRateSeries = self.append(self.heartRateSeries, updated.heartRate.map(Double.init))
+                self.distanceSeries  = self.append(self.distanceSeries, updated.distanceM)
+                self.energySeries    = self.append(self.energySeries, updated.energyKcal)
                 self.lastUpdate = Date()
             }
         } else if characteristic.uuid == FTMS.fitnessStatus {

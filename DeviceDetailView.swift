@@ -28,7 +28,6 @@ struct DeviceDetailView: View {
                     MetricCard(title: "阻力(本地)", value: "\(manager.resistanceLevel) 档")
                     MetricCard(title: "距离", value: fmt(manager.latest.distanceM, "m"))
                     MetricCard(title: "能耗", value: fmt(manager.latest.energyKcal, "kcal"))
-                    MetricCard(title: "心率", value: fmtD(manager.latest.heartRate, "bpm"))
                     MetricCard(title: "更新", value: timeAgo)
                 }
 
@@ -38,7 +37,6 @@ struct DeviceDetailView: View {
                     LineChartView(title: "速度", data: manager.speedSeries, color: .blue, unit: "km/h")
                     LineChartView(title: "踏频", data: manager.cadenceSeries, color: .green, unit: "RPM")
                     LineChartView(title: "功率", data: manager.powerSeries, color: .orange, unit: "W")
-                    LineChartView(title: "心率", data: manager.heartRateSeries, color: .red, unit: "bpm")
                     LineChartView(title: "距离", data: manager.distanceSeries, color: .purple, unit: "m")
                     LineChartView(title: "能耗", data: manager.energySeries, color: .teal, unit: "kcal")
                 }
@@ -57,6 +55,15 @@ struct DeviceDetailView: View {
                         Text("• \(ev.opName) → \(ev.resultName)")
                             .font(.caption)
                             .foregroundColor(ev.resultName == "成功" ? .green : .red)
+                    }
+                }
+
+                // 调试字段（确认 MRK 数据单位用，普通使用可忽略）
+                DisclosureGroup("调试字段（累计计数值）") {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("原始累计值 cumRevsRaw：\(manager.lastCumRevsValue)").font(.system(.caption, design: .monospaced))
+                        Text("每秒增量 rate：\(String(format: "%.3f", manager.lastCadenceRate)) /s").font(.system(.caption, design: .monospaced))
+                        Text("说明：若 rate≈1~3 则单位为 转/秒（×60≈踏频 RPM）；若 rate≈0.01~0.1 则更接近 米/秒。").font(.caption2).foregroundColor(.secondary)
                     }
                 }
 
