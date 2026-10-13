@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <!-- 签名方式：development=装自己设备调试；ad-hoc=分发无 App Store；app-store=上架 -->
+    <key>method</key>
+    <string>development</string>
+
+    <!-- 改成你自己的 10 位 Apple Developer Team ID（Apple 开发者后台可查） -->
+    <key>teamID</key>
+    <string>YOUR_TEAM_ID</string>
+
+    <!-- 自动签名：需 CI/Mac 钥匙串已登录你的开发者账号；改 manual 则需自备证书+描述文件 -->
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <key>stripSwiftSymbols</key>
+    <true/>
+    <key>uploadSymbols</key>
+    <false/>
+</dict>
+</plist>
