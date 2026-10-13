@@ -59,11 +59,12 @@ struct DeviceDetailView: View {
                 }
 
                 // 调试字段（确认 MRK 数据单位用，普通使用可忽略）
-                DisclosureGroup("调试字段（累计计数值）") {
+                DisclosureGroup("调试字段（确认数据单位）") {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("原始累计值 cumRevsRaw：\(manager.lastCumRevsValue)").font(.system(.caption, design: .monospaced))
-                        Text("每秒增量 rate：\(String(format: "%.3f", manager.lastCadenceRate)) /s").font(.system(.caption, design: .monospaced))
-                        Text("说明：若 rate≈1~3 则单位为 转/秒（×60≈踏频 RPM）；若 rate≈0.01~0.1 则更接近 米/秒。").font(.caption2).foregroundColor(.secondary)
+                        Text("踏频位累计值 cumRevsRaw：\(manager.lastCumRevsValue)").font(.system(.caption, design: .monospaced))
+                        Text("踏频位每秒增量 rate：\(String(format: "%.3f", manager.lastCadenceRate)) 转/秒").font(.system(.caption, design: .monospaced))
+                        Text("设备距离位 distanceRaw(原始uint24)：\(manager.lastDistanceRaw) m").font(.system(.caption, design: .monospaced))
+                        Text("判读：① 稳定蹬踏时 rate 应≈2.27 转/秒（=136RPM/60）；若你看到稳态≈6~7，说明该字段是飞轮转数(约×3)，踏频需÷3，请告诉我。② distanceRaw 若随蹬踏稳定增长，则『距离』已是设备真实值（已不再用估算系数）。").font(.caption2).foregroundColor(.secondary)
                     }
                 }
 

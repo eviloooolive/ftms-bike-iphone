@@ -32,6 +32,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     // 调试用：暴露原始累计值与每秒增量，便于确认字段单位（转数/米）。
     @Published var lastCumRevsValue: UInt16 = 0
     @Published var lastCadenceRate: Double = 0
+    @Published var lastDistanceRaw: UInt32 = 0    // 设备距离位原始 uint24 值（调试用）
 
     // MARK: - 私有
     private var central: CBCentralManager!
@@ -194,7 +195,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         if flags & 0x0002 != 0, off + 2 <= count { off += 2 }                              // 平均速度
         if flags & 0x0004 != 0, off + 2 <= count { s.cumRevsRaw = u16(data, off); off += 2 } // 累计计数（非瞬时踏频）
         if flags & 0x0008 != 0, off + 2 <= count { off += 2 }                              // 平均踏频
-        if flags & 0x0010 != 0, off + 3 <= count { s.distanceM = Double(u24(data, off)); off += 3 } // 仅作参考，主显示由 cumRevsRaw 换算
+        if flags & 0x0010 != 0, off + 3 <= count { let d = u24(data, off); s.distanceRaw = d; s.distanceM = Double(d); off += 3 } // 设备标准距离位(uint24 绝对米数)，优先使用
 
         let hasRes = (flags & 0x0020) != 0
         let hasPow = (flags & 0x0040) != 0
@@ -379,6 +380,7 @@ extension BluetoothManager: CBPeripheralDelegate {
                 updated.speedKmph = s.speedKmph
                 updated.powerW = s.powerW
                 updated.energyKcal = s.energyKcal
+                if let d = s.distanceM { updated.distanceM = d }   // 优先用设备标准距离位（uint24 绝对米数）
                 if let raw = s.cumRevsRaw {
                     let now = Date()
                     if let last = self.lastCumRevs, let lastT = self.lastCumTime {
@@ -397,8 +399,9 @@ extension BluetoothManager: CBPeripheralDelegate {
                     self.lastCumTime = now
                     self.lastCumRevsValue = raw
                     updated.cadenceRpm = max(0, self.smoothedCadence)
-                    updated.distanceM = Double(raw) * self.metersPerRev
+                    if s.distanceM == nil { updated.distanceM = Double(raw) * self.metersPerRev }  // 无距离位时回退估算
                 }
+                if let dRaw = s.distanceRaw { self.lastDistanceRaw = dRaw }
                 self.latest = updated
                 self.speedSeries     = self.append(self.speedSeries, updated.speedKmph)
                 self.cadenceSeries   = self.append(self.cadenceSeries, updated.cadenceRpm)

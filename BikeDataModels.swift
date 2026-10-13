@@ -10,8 +10,10 @@ struct IndoorBikeSample {
     var energyKcal: Double?
     var heartRate: Int?
     /// MRK 在“踏频”位(bit2)上发的是累计计数值（转数），并非瞬时踏频；
-    /// 由 BluetoothManager 差分得到稳定踏频与距离，原始值留此用于调试。
+    /// 由 BluetoothManager 差分得到稳定踏频，原始值留此用于调试。
     var cumRevsRaw: UInt16?
+    /// 设备标准距离位(bit4, uint24 绝对米数) 的原始值，用于确认距离是否随骑行增长。
+    var distanceRaw: UInt32?
 }
 
 /// 扫描发现的设备（UI 用，可识别）。
