@@ -196,7 +196,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         case 0x05: name = "倾斜范围上报"
         case 0x06: name = "阻力范围上报"
         case 0x07: name = "功率范围上报"
-        case 0x08: name = "阻力已变更"; if data.count >= 3 { let lvl = Double(Int16(bitPattern: u16(data, 1))) / 10.0; detail = String(format: "(%.0f 档)", lvl) }
+        case 0x08: name = "阻力已变更"; if data.count >= 3 { let lvl = Double(Int16(bitPattern: Self.u16(data, 1))) / 10.0; detail = String(format: "(%.0f 档)", lvl) }
         case 0x09: name = "功率已变更"
         case 0x0A: name = "心率已变更"
         default: name = String(format: "状态 0x%02X", op)
